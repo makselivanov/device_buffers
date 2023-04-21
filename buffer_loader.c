@@ -19,7 +19,7 @@ static size_t device_usage[MAX_COUNT];
 
 int param_count_set(const char *val, const struct kernel_param *kp)
 {
-    int ncount;
+    int ncount, res;
 
     if (kstrtoint(val, 0, &ncount))
     {
@@ -33,7 +33,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
         return -ERANGE;
     }
     ncount = count;
-    int res = param_set_int(val, kp);
+    res = param_set_int(val, kp);
     if (res == 0) 
     {
         //TODO add or remove buffers
@@ -45,7 +45,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
         } else {
             pr_info("BUFFER: count don't change\n");
         }
-        pr_info("BUFFER: new count = %d\n", count);
+        pr_info("BUFFER: new count = %lu\n", count);
         return 0;
     }
 
@@ -66,37 +66,40 @@ static size_t size = 1024;
 module_param(size, ulong, 0644);
 MODULE_PARM_DESC(size, "Default size of buffer");
 
-static ssize_t chrdev_read(struct file *file, char __user *buf, size_t len, loff_t *off)
+static ssize_t chrdev_read(struct file *file, char __user *buf, size_t length, loff_t *off)
 {
-    int minor = (int) file->private_data;
-    pr_info("BUFFER: device %d, reader with offset %lld and length %ld\n", minor, *off, len);
-    size_t length = len, offset = *off;
+    size_t offset = *off;
+    ssize_t uncopy;
+    unsigned int minor = (uintptr_t) file->private_data;
+    pr_info("BUFFER: device %u, reader with offset %lld and length %ld\n", minor, *off, length);
 
     read_lock(&buffer_lock[minor]); //FIXME lock to semaphore
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
-    ssize_t uncopy = copy_to_user(buf, buffer[minor] + offset, length);
+    uncopy = copy_to_user(buf, buffer[minor] + offset, length);
     read_unlock(&buffer_lock[minor]);
     if (uncopy > 0) {
-        pr_err("BUFFER: copy_to_user failed, doesn't copy %d bytes", uncopy);
+        pr_err("BUFFER: copy_to_user failed, doesn't copy %lu bytes", uncopy);
         return -EFAULT;
     }
     *off += length;
     return length;
 }
 
-static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t len, loff_t *off)
+static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t length, loff_t *off)
 {
-    int minor = (int) file->private_data;
-    pr_info("BUFFER: device %d, writing with offset %lld and length %ld\n", minor, *off, len);
+    size_t offset = 0;
+    ssize_t uncopy;
+    char *tmp_buffer;
+    unsigned int minor = (uintptr_t) file->private_data;
+    pr_info("BUFFER: device %u, writing with offset %lld and length %lu\n", minor, *off, length);
     if (*off >= buffer_size[minor])
         return -EINVAL;
 
-    size_t length = len, offset = 0;
     if (off != NULL)
         offset = *off;
 
-    char *tmp_buffer = kzalloc(length, GFP_KERNEL);
+    tmp_buffer = kzalloc(length, GFP_KERNEL);
     if (tmp_buffer == NULL) {
         pr_err("BUFFER: can't alloc memory for tmp buffer");
         return -ENOMEM;
@@ -104,10 +107,10 @@ static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t le
     write_lock(&buffer_lock[minor]); //FIXME lock to semaphore
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
-    ssize_t uncopy = copy_from_user(tmp_buffer, buf, length);
+    uncopy = copy_from_user(tmp_buffer, buf, length);
     write_unlock(&buffer_lock[minor]);
     if (uncopy > 0) {
-        pr_err("BUFFER: copy_from_user failed, doesn't copy %d bytes", uncopy);
+        pr_err("BUFFER: copy_from_user failed, doesn't copy %lu bytes", uncopy);
         kfree(tmp_buffer);
         return -EFAULT;
     }
@@ -128,7 +131,7 @@ static int chrdev_open(struct inode *inode, struct file *file) {
         }
     }
     ++device_usage[minor];
-    pr_info("BUFFER: open %d device, current usage: %d", minor, device_usage[minor]);
+    pr_info("BUFFER: open %d device, current usage: %lu", minor, device_usage[minor]);
     file->private_data = (void *) (uintptr_t) minor;
     return 0;
 }
@@ -136,7 +139,7 @@ static int chrdev_open(struct inode *inode, struct file *file) {
 static int chrdev_release(struct inode *inode, struct file *file) {
     int minor = iminor(inode);
     --device_usage[minor];
-    pr_info("BUFFER: close %d device, current usage: %d", minor, device_usage[minor]);
+    pr_info("BUFFER: close %d device, current usage: %lu", minor, device_usage[minor]);
     if (device_usage[minor] == 0) {
         kfree(buffer[minor]);
     }
@@ -159,18 +162,16 @@ static struct class *chrdev_class;
 
 static int __init module_start(void)
 {
-    int i;
+    int i, res;
     for (i = 0; i < MAX_COUNT; ++i) {
         device_usage[i] = 0;
     }
     if (size > MAX_COUNT) 
     {
-        pr_err("BUFFER: max count exceeded, should be <%d, given %d\n", MAX_COUNT, count);
+        pr_err("BUFFER: max count exceeded, should be <%d, given %lu\n", MAX_COUNT, count);
         return -ERANGE;
     }
-    pr_info("BUFFER: load size=%d count%d\n", size, count);
-
-    int res;
+    pr_info("BUFFER: load size=%lu count%lu\n", size, count);
 
     if ((res = alloc_chrdev_region(&dev, 0, 1, "chrdev")) < 0)
     {
