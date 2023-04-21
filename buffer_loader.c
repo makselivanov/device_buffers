@@ -57,7 +57,7 @@ const struct kernel_param_ops param_count_of =
 {
     .set = &param_count_set,
     .get = &param_get_ulong,
-}
+};
 
 module_param_cb(count, &param_count_of, &count, 0644);
 MODULE_PARM_DESC(count, "Max count of devices");
