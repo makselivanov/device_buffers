@@ -7,10 +7,10 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Makar Selivanov");
-MODULE_DESCRIPTION("This module create buffer in memory");
+MODULE_DESCRIPTION("This module create buffers in memory");
 MODULE_VERSION("1.0");
 
-#define MAX_COUNT 100
+#define MAX_COUNT 20
 static size_t count = 0;
 static rwlock_t buffer_lock[MAX_COUNT];
 static char **buffer;
@@ -36,12 +36,22 @@ int param_count_set(const char *val, const struct kernel_param *kp)
     res = param_set_int(val, kp);
     if (res == 0) 
     {
-        //TODO add or remove buffers
         if (ncount < count) {
             //Old was less than new, need to create new devices
+            while (ncount < count) {
+                buffer_size[ncount] = size;
+                device_usage[ncount] = 0;
+                buffer[ncount] = kzalloc(buffer_size, GFP_KERNEL);
+                ++ncount;
+            }
         }
         else if (ncount > count) {
             //Old was bigger than new, need to delete
+            while (ncount > count) {
+                // TODO writelock
+                free(buffer[ncount]);
+                --ncount;
+            }
         } else {
             pr_info("BUFFER: count don't change\n");
         }
@@ -166,12 +176,12 @@ static int __init module_start(void)
     for (i = 0; i < MAX_COUNT; ++i) {
         device_usage[i] = 0;
     }
-    if (size > MAX_COUNT) 
+    if (count > MAX_COUNT)
     {
-        pr_err("BUFFER: max count exceeded, should be <%d, given %lu\n", MAX_COUNT, count);
+        pr_err("BUFFER: max count exceeded, should be < %d, given %lu\n", MAX_COUNT, count);
         return -ERANGE;
     }
-    pr_info("BUFFER: load size=%lu count%lu\n", size, count);
+    pr_info("BUFFER: load size=%lu count=%lu\n", size, count);
 
     if ((res = alloc_chrdev_region(&dev, 0, 1, "chrdev")) < 0)
     {
