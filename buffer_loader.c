@@ -11,11 +11,16 @@ MODULE_DESCRIPTION("This module create buffers in memory");
 MODULE_VERSION("1.0");
 
 #define MAX_COUNT 20
-static size_t count = 0;
 static rwlock_t buffer_lock[MAX_COUNT];
 static char **buffer;
 static size_t buffer_size[MAX_COUNT];
 static size_t device_usage[MAX_COUNT];
+
+static size_t size = 1024;
+module_param(size, ulong, 0644);
+MODULE_PARM_DESC(size, "Default size of buffer");
+
+static size_t count = 0;
 
 int param_count_set(const char *val, const struct kernel_param *kp)
 {
@@ -41,7 +46,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
             while (ncount < count) {
                 buffer_size[ncount] = size;
                 device_usage[ncount] = 0;
-                buffer[ncount] = kzalloc(buffer_size, GFP_KERNEL);
+                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL);
                 ++ncount;
             }
         }
@@ -49,7 +54,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
             //Old was bigger than new, need to delete
             while (ncount > count) {
                 // TODO writelock
-                free(buffer[ncount]);
+                kfree(buffer[ncount]);
                 --ncount;
             }
         } else {
@@ -62,7 +67,6 @@ int param_count_set(const char *val, const struct kernel_param *kp)
     pr_err("BUFFER: unknown error\n");
     return -ERANGE;
 }
-
 const struct kernel_param_ops param_count_of = 
 {
     .set = &param_count_set,
@@ -71,10 +75,6 @@ const struct kernel_param_ops param_count_of =
 
 module_param_cb(count, &param_count_of, &count, 0644);
 MODULE_PARM_DESC(count, "Max count of devices");
-
-static size_t size = 1024;
-module_param(size, ulong, 0644);
-MODULE_PARM_DESC(size, "Default size of buffer");
 
 static ssize_t chrdev_read(struct file *file, char __user *buf, size_t length, loff_t *off)
 {
