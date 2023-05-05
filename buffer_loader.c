@@ -11,14 +11,16 @@ MODULE_DESCRIPTION("This module create buffers in memory");
 MODULE_VERSION("1.0");
 
 #define MAX_COUNT 20
-static rwlock_t buffer_lock[MAX_COUNT];
-static char **buffer;
+static struct semaphore buffer_lock[MAX_COUNT];
+static char *buffer[MAX_COUNT];
 static size_t buffer_size[MAX_COUNT];
 static size_t device_usage[MAX_COUNT];
 
 static size_t size = 1024;
 module_param(size, ulong, 0644);
 MODULE_PARM_DESC(size, "Default size of buffer");
+
+//TODO add something to change size of already existing buffers
 
 static size_t count = 0;
 
@@ -53,8 +55,10 @@ int param_count_set(const char *val, const struct kernel_param *kp)
         else if (ncount > count) {
             //Old was bigger than new, need to delete
             while (ncount > count) {
-                // TODO writelock
+                down(buffer_lock + ncount); //lock
                 kfree(buffer[ncount]);
+                buffer[ncount] = 0;
+                up(buffer_lock + ncount);  //unlock
                 --ncount;
             }
         } else {
@@ -83,11 +87,11 @@ static ssize_t chrdev_read(struct file *file, char __user *buf, size_t length, l
     unsigned int minor = (uintptr_t) file->private_data;
     pr_info("BUFFER: device %u, reader with offset %lld and length %ld\n", minor, *off, length);
 
-    read_lock(&buffer_lock[minor]); //FIXME lock to semaphore
+    down(buffer_lock + minor);
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
     uncopy = copy_to_user(buf, buffer[minor] + offset, length);
-    read_unlock(&buffer_lock[minor]);
+    up(buffer_lock + minor);
     if (uncopy > 0) {
         pr_err("BUFFER: copy_to_user failed, doesn't copy %lu bytes", uncopy);
         return -EFAULT;
@@ -114,11 +118,11 @@ static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t le
         pr_err("BUFFER: can't alloc memory for tmp buffer");
         return -ENOMEM;
     }
-    write_lock(&buffer_lock[minor]); //FIXME lock to semaphore
+    down(buffer_lock + minor);
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
     uncopy = copy_from_user(tmp_buffer, buf, length);
-    write_unlock(&buffer_lock[minor]);
+    up(buffer_lock + minor);
     if (uncopy > 0) {
         pr_err("BUFFER: copy_from_user failed, doesn't copy %lu bytes", uncopy);
         kfree(tmp_buffer);
@@ -152,6 +156,7 @@ static int chrdev_release(struct inode *inode, struct file *file) {
     pr_info("BUFFER: close %d device, current usage: %lu", minor, device_usage[minor]);
     if (device_usage[minor] == 0) {
         kfree(buffer[minor]);
+        buffer[minor] = 0;
     }
     return 0;
 }
@@ -175,6 +180,8 @@ static int __init module_start(void)
     int i, res;
     for (i = 0; i < MAX_COUNT; ++i) {
         device_usage[i] = 0;
+        buffer[i] = 0;
+        sema_init(buffer_lock + i, 1);
     }
     if (count > MAX_COUNT)
     {
@@ -182,51 +189,35 @@ static int __init module_start(void)
         return -ERANGE;
     }
     pr_info("BUFFER: load size=%lu count=%lu\n", size, count);
-
-    if ((res = alloc_chrdev_region(&dev, 0, 1, "chrdev")) < 0)
-    {
+    if ((res = alloc_chrdev_region(&dev, 0, MAX_COUNT, "chrdev")) < 0) {
         pr_err("Error allocating major number\n");
         return res;
     }
     pr_info("CHRDEV load: Major = %d Minor = %d\n", MAJOR(dev), MINOR(dev));
-
-    cdev_init (&chrdev_cdev, &chrdev_ops);
-    if ((res = cdev_add (&chrdev_cdev, dev, 1)) < 0)
-    {
+    cdev_init(&chrdev_cdev, &chrdev_ops);
+    if ((res = cdev_add(&chrdev_cdev, dev, count)) < 0) {
         pr_err("CHRDEV: device registering error\n");
-        unregister_chrdev_region (dev, 1);
+        unregister_chrdev_region(dev, 1);
         return res;
     }
 
-    if (IS_ERR(chrdev_class = class_create (THIS_MODULE, "buffer_class")))
-    {
-        cdev_del (&chrdev_cdev);
-        unregister_chrdev_region (dev, 1);
-        return -1;
-    }
-    
-    if (IS_ERR(device_create(chrdev_class, NULL, dev, NULL, "buffer_device")))
-    {
-        pr_err("CHRDEV: error creating device\n");
-        class_destroy (chrdev_class);
-        cdev_del (&chrdev_cdev);
-        unregister_chrdev_region(dev, 1);
-        return -1;
-    }
-
-    buffer = (char **) kzalloc(MAX_COUNT * sizeof(char *), GFP_KERNEL);
-    if (buffer == NULL) {
-        pr_err("BUFFER: can't init pointer buffer");
-        device_destroy(chrdev_class, dev);
-        class_destroy(chrdev_class);
+    if (IS_ERR(chrdev_class = class_create(THIS_MODULE, "buffer_class"))) {
         cdev_del(&chrdev_cdev);
         unregister_chrdev_region(dev, 1);
         return -1;
     }
 
-    for (i = 0; i < MAX_COUNT; i++) 
-        rwlock_init(&buffer_lock[i]);
-    
+    char str[64];
+    for (int i = 0; i < count; ++i) {
+        sprintf(str, "buffer_device_%d", i);
+        if (IS_ERR(device_create(chrdev_class, NULL, dev, NULL, str))) {
+            pr_err("CHRDEV: error creating device\n");
+            class_destroy(chrdev_class);
+            cdev_del(&chrdev_cdev);
+            unregister_chrdev_region(dev, 1);
+            return -1;
+        }
+    }
     return 0;
 }
 
