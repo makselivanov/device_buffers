@@ -10,16 +10,23 @@ MODULE_AUTHOR("Makar Selivanov");
 MODULE_DESCRIPTION("This module create buffers in memory");
 MODULE_VERSION("1.0");
 
+#define TRUE 1
+#define FALSE 0
+
 #define MAX_COUNT 20
 static struct semaphore buffer_lock[MAX_COUNT];
 static char *buffer[MAX_COUNT];
 static size_t buffer_size[MAX_COUNT];
 static size_t device_usage[MAX_COUNT];
+static int device_created[MAX_COUNT];
 
 static size_t size = 1024;
 module_param(size, ulong, 0644);
 MODULE_PARM_DESC(size, "Default size of buffer");
 
+dev_t dev = 0;
+static struct cdev chrdev_cdev;
+static struct class *chrdev_class;
 //TODO add something to change size of already existing buffers
 
 static size_t count = 0;
@@ -43,28 +50,44 @@ int param_count_set(const char *val, const struct kernel_param *kp)
     res = param_set_int(val, kp);
     if (res == 0) 
     {
+        pr_info("BUFFER: new count = %lu\n", count);
         if (ncount < count) {
-            //Old was less than new, need to create new devices
+            //Old was less than new, need to create new devices //TODO chdev add
             while (ncount < count) {
+                down(buffer_lock + ncount); //lock
+                dev = MKDEV(MAJOR(dev), ncount);
+                if ((res = cdev_add(&chrdev_cdev, dev, 1)) < 0) {
+                    pr_err("CHRDEV: device registering error\n");
+                    unregister_chrdev_region(dev, 1);
+                    return -res;
+                }
                 buffer_size[ncount] = size;
                 device_usage[ncount] = 0;
-                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL);
+                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL); //FIXME ???
+                up(buffer_lock + ncount);  //unlock
+                pr_info("BUFFER: allocated %lu bytes for %lu device", size, ncount);
                 ++ncount;
             }
         }
         else if (ncount > count) {
-            //Old was bigger than new, need to delete
+            //Old was bigger than new, need to delete //TODO chdev del
             while (ncount > count) {
+                --ncount;
                 down(buffer_lock + ncount); //lock
                 kfree(buffer[ncount]);
                 buffer[ncount] = 0;
+                dev = MKDEV(MAJOR(dev), ncount);
+                if ((res = cdev_add(&chrdev_cdev, dev, 1)) < 0) {
+                    pr_err("CHRDEV: device registering error\n");
+                    unregister_chrdev_region(dev, 1);
+                    return -res;
+                }
                 up(buffer_lock + ncount);  //unlock
-                --ncount;
+                pr_info("BUFFER: free %lu device", ncount);
             }
         } else {
             pr_info("BUFFER: count don't change\n");
         }
-        pr_info("BUFFER: new count = %lu\n", count);
         return 0;
     }
 
@@ -170,11 +193,6 @@ static struct file_operations chrdev_ops =
     .release    = chrdev_release
 };
 
-dev_t dev = 0;
-static struct cdev chrdev_cdev;
-static struct class *chrdev_class;
-
-
 static int __init module_start(void)
 {
     int i, res;
@@ -193,12 +211,16 @@ static int __init module_start(void)
         pr_err("Error allocating major number\n");
         return res;
     }
-    pr_info("CHRDEV load: Major = %d Minor = %d\n", MAJOR(dev), MINOR(dev));
+    pr_info("CHRDEV load: Major = %d\n", MAJOR(dev));
     cdev_init(&chrdev_cdev, &chrdev_ops);
+
     if ((res = cdev_add(&chrdev_cdev, dev, count)) < 0) {
         pr_err("CHRDEV: device registering error\n");
         unregister_chrdev_region(dev, 1);
         return res;
+    }
+    for (int i = 0; i < count; ++i) {
+        device_created[i] = TRUE;
     }
 
     if (IS_ERR(chrdev_class = class_create(THIS_MODULE, "buffer_class"))) {
@@ -206,11 +228,13 @@ static int __init module_start(void)
         unregister_chrdev_region(dev, 1);
         return -1;
     }
+    dev_t cur_dev = dev;
 
     char str[64];
-    for (int i = 0; i < count; ++i) {
-        sprintf(str, "buffer_device_%d", i);
-        if (IS_ERR(device_create(chrdev_class, NULL, dev, NULL, str))) {
+    cur_dev = dev;
+    for (int i = 0; i < MAX_COUNT; ++i, ++cur_dev) { //TODO Change to count and fix createtion when count changing?
+        sprintf(str, "buffer!buffer_device_%d", i);
+        if (IS_ERR(device_create(chrdev_class, NULL, cur_dev, NULL, str))) {
             pr_err("CHRDEV: error creating device\n");
             class_destroy(chrdev_class);
             cdev_del(&chrdev_cdev);
@@ -224,7 +248,9 @@ static int __init module_start(void)
 static void __exit module_end(void)
 {
     int i;
-    device_destroy (chrdev_class, dev);
+    dev_t cur_dev = dev;
+    for (i = 0; i < MAX_COUNT; ++i, ++cur_dev)
+        device_destroy(chrdev_class, cur_dev);
     class_destroy (chrdev_class);
     cdev_del (&chrdev_cdev);
     unregister_chrdev_region(dev, 1);

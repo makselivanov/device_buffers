@@ -1,5 +1,6 @@
 KERNELRELEASE ?= $(shell uname -r)
 KERNEL_DIR  ?= /lib/modules/$(KERNELRELEASE)/build
+# KERNEL_DIR ?= /lib/modules/$(KERNELRELEASE)
 PWD := $(shell pwd)
 
 obj-m := buffer_loader.o
