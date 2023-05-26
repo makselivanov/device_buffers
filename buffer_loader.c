@@ -18,6 +18,7 @@ static struct semaphore buffer_lock[MAX_COUNT];
 static char *buffer[MAX_COUNT];
 static size_t buffer_size[MAX_COUNT];
 static size_t device_usage[MAX_COUNT];
+static int chrdev_created[MAX_COUNT];
 static int device_created[MAX_COUNT];
 
 static size_t size = 1024;
@@ -35,9 +36,20 @@ dev_t set_minor(dev_t dev, int minor) {
     return MKDEV(MAJOR(dev), minor);
 }
 
+void unload_all_device(void) {
+    int i;
+    dev_t cur_dev = set_minor(dev, 0);
+    for (i = 0; i < MAX_COUNT; ++i) {
+        if (device_created[i]) {
+            device_destroy(chrdev_class, cur_dev);
+        }
+        ++cur_dev;
+    }
+}
+
 void unload_all_cdev(void) {
     for (int i = 0; i < MAX_COUNT; ++i) {
-        if (device_created[i]) {
+        if (chrdev_created[i]) {
             cdev_del(chrdev_cdev + i);
         }
     }
@@ -54,6 +66,8 @@ void free_all_buffers(void) {
 int param_count_set(const char *val, const struct kernel_param *kp)
 {
     int ncount, res;
+    char str[64];
+    dev_t cur_dev;
 
     if (kstrtoint(val, 0, &ncount))
     {
@@ -72,19 +86,34 @@ int param_count_set(const char *val, const struct kernel_param *kp)
     {
         pr_info("BUFFER: new count = %lu, old count = %d\n", count, ncount);
         if (ncount < count) {
-            //Old was less than new, need to create new devices //TODO chdev add
+            //Old was less than new, need to create new devices
             while (ncount < count) {
                 down(buffer_lock + ncount); //lock
                 dev = set_minor(dev, ncount);
                 if ((res = cdev_add(chrdev_cdev + ncount, dev, 1)) < 0) {
                     pr_err("CHRDEV: device registering error\n");
+                    unload_all_device();
+                    class_destroy(chrdev_class);
+                    unload_all_cdev();
                     unregister_chrdev_region(dev, 1);
                     return -res;
                 }
                 buffer_size[ncount] = size;
                 device_usage[ncount] = 0;
+                chrdev_created[ncount] = TRUE;
+                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL);
+
+                cur_dev = set_minor(dev, ncount);
+                sprintf(str, "buffer!buffer_device_%d", ncount);
+                if (IS_ERR(device_create(chrdev_class, NULL, cur_dev, NULL, str))) {
+                    pr_err("CHRDEV: error creating device\n");
+                    unload_all_device();
+                    class_destroy(chrdev_class);
+                    unload_all_cdev();
+                    unregister_chrdev_region(dev, 1);
+                    return -1;
+                }
                 device_created[ncount] = TRUE;
-                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL); //FIXME ???
                 up(buffer_lock + ncount);  //unlock
                 pr_info("BUFFER: allocated %lu bytes for %d device\n", size, ncount);
                 ++ncount;
@@ -97,7 +126,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
                 down(buffer_lock + ncount); //lock
                 kfree(buffer[ncount]);
                 buffer[ncount] = 0;
-                device_created[ncount] = FALSE;
+                chrdev_created[ncount] = FALSE;
                 cdev_del(chrdev_cdev + ncount);
                 up(buffer_lock + ncount);  //unlock
                 pr_info("BUFFER: free %d device\n", ncount);
@@ -146,7 +175,7 @@ int device_minor_set(const char *val, const struct kernel_param *kp)
     {
         pr_info("BUFFER: new device_minor = %d, current device_size = %lu\n", device_minor, device_size);
         if (device_minor >= 0) {
-            if (device_created[minor]) {
+            if (chrdev_created[minor]) {
                 down(buffer_lock + device_minor);
                 kfree(buffer + device_minor);
                 buffer_size[device_minor] = device_size;
@@ -233,7 +262,7 @@ static int chrdev_open(struct inode *inode, struct file *file) {
         buffer_size[minor] = size;
         if (buffer[minor] == NULL) {    
             pr_err("BUFFER: can't init %d device buffer\n", minor);
-            //TODO remove all buffers?
+            return -1;
         }
     }
     ++device_usage[minor];
@@ -245,7 +274,7 @@ static int chrdev_open(struct inode *inode, struct file *file) {
 static int chrdev_release(struct inode *inode, struct file *file) {
     int minor = iminor(inode);
     --device_usage[minor];
-    pr_info("BUFFER: close %d device, current usage: %lu", minor, device_usage[minor]);
+    pr_info("BUFFER: close %d device, current usage: %lu\n", minor, device_usage[minor]);
     if (device_usage[minor] == 0) {
         kfree(buffer[minor]);
         buffer[minor] = 0;
@@ -289,10 +318,11 @@ static int __init module_start(void)
         dev = set_minor(dev, i);
         if ((res = cdev_add(chrdev_cdev + i, dev, 1)) < 0) {
             pr_err("CHRDEV: device registering error for number %d\n", i);
-            unregister_chrdev_region(dev, 1); //FIXME
+            unload_all_cdev();
+            unregister_chrdev_region(dev, 1);
             return res;
         }
-        device_created[i] = TRUE;
+        chrdev_created[i] = TRUE;
     }
 
     if (IS_ERR(chrdev_class = class_create(THIS_MODULE, "buffer_class"))) {
@@ -302,25 +332,24 @@ static int __init module_start(void)
     }
 
     cur_dev = set_minor(dev, 0);
-    for (int i = 0; i < MAX_COUNT; ++i, ++cur_dev) { //FIXME change to count and add to
+    for (int i = 0; i < count; ++i, ++cur_dev) { //FIXME change to count and add to
         sprintf(str, "buffer!buffer_device_%d", i);
         if (IS_ERR(device_create(chrdev_class, NULL, cur_dev, NULL, str))) {
             pr_err("CHRDEV: error creating device\n");
+            unload_all_device();
             class_destroy(chrdev_class);
             unload_all_cdev();
             unregister_chrdev_region(dev, 1);
             return -1;
         }
+        device_created[i] = TRUE;
     }
     return 0;
 }
 
 static void __exit module_end(void)
 {
-    int i;
-    dev_t cur_dev = set_minor(dev, 0);
-    for (i = 0; i < MAX_COUNT; ++i, ++cur_dev)
-        device_destroy(chrdev_class, cur_dev);
+    unload_all_device();
     class_destroy (chrdev_class);
     free_all_buffers();
     unload_all_cdev();
