@@ -14,15 +14,47 @@ MODULE_VERSION("1.0");
 #define FALSE 0
 
 #define MAX_COUNT 20
-static struct semaphore buffer_lock[MAX_COUNT];
+static struct rw_semaphore buffer_lock[MAX_COUNT];
 static char *buffer[MAX_COUNT];
 static size_t buffer_size[MAX_COUNT];
 static size_t device_usage[MAX_COUNT];
 static int chrdev_created[MAX_COUNT];
 static int device_created[MAX_COUNT];
 
+
 static size_t size = 1024;
-module_param(size, ulong, 0644);
+int param_size_set(const char *val, const struct kernel_param *kp)
+{
+    int nsize, res;
+
+    if (kstrtouint(val, 0, &nsize))
+    {
+        pr_err("BUFFER: bad size format\n");
+        return -ERANGE;
+    }
+    nsize = size;
+    res = param_set_uint(val, kp);
+    if (res == 0)
+    {
+        pr_info("BUFFER: new size = %lu, old size = %d\n", size, nsize);
+        for (int i = 0; i < MAX_COUNT; ++i) {
+            if (device_usage[i] == 0) {
+                buffer_size[i] = size;
+            }
+        }
+        return 0;
+    }
+
+    pr_err("BUFFER: unknown error\n");
+    return -ERANGE;
+}
+const struct kernel_param_ops param_size_of =
+{
+        .set = &param_size_set,
+        .get = &param_get_ulong,
+};
+
+module_param_cb(size, &param_size_of, &size, 0644);
 MODULE_PARM_DESC(size, "Default size of buffer");
 
 dev_t dev = 0;
@@ -88,7 +120,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
         if (ncount < count) {
             //Old was less than new, need to create new devices
             while (ncount < count) {
-                down(buffer_lock + ncount); //lock
+                down_write(buffer_lock + ncount); //lock
                 dev = set_minor(dev, ncount);
                 if ((res = cdev_add(chrdev_cdev + ncount, dev, 1)) < 0) {
                     pr_err("CHRDEV: device registering error\n");
@@ -114,7 +146,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
                     return -1;
                 }
                 device_created[ncount] = TRUE;
-                up(buffer_lock + ncount);  //unlock
+                up_write(buffer_lock + ncount);  //unlock
                 pr_info("BUFFER: allocated %lu bytes for %d device\n", size, ncount);
                 ++ncount;
             }
@@ -123,12 +155,12 @@ int param_count_set(const char *val, const struct kernel_param *kp)
             //Old was bigger than new, need to delete //TODO chdev del
             while (ncount > count) {
                 --ncount;
-                down(buffer_lock + ncount); //lock
+                down_write(buffer_lock + ncount); //lock
                 kfree(buffer[ncount]);
                 buffer[ncount] = 0;
                 chrdev_created[ncount] = FALSE;
                 cdev_del(chrdev_cdev + ncount);
-                up(buffer_lock + ncount);  //unlock
+                up_write(buffer_lock + ncount);  //unlock
                 pr_info("BUFFER: free %d device\n", ncount);
             }
         } else {
@@ -176,11 +208,13 @@ int device_minor_set(const char *val, const struct kernel_param *kp)
         pr_info("BUFFER: new device_minor = %d, current device_size = %lu\n", device_minor, device_size);
         if (device_minor >= 0) {
             if (chrdev_created[minor]) {
-                down(buffer_lock + device_minor);
-                kfree(buffer + device_minor);
+                down_write(buffer_lock + device_minor);
                 buffer_size[device_minor] = device_size;
-                buffer[device_minor] = kzalloc(buffer_size[device_minor], GFP_KERNEL); //FIXME ???
-                up(buffer_lock + device_minor);
+                if (device_usage[minor] > 0) {
+                    kfree(buffer + device_minor);
+                    buffer[device_minor] = kzalloc(buffer_size[device_minor], GFP_KERNEL); //FIXME ???
+                }
+                up_write(buffer_lock + device_minor);
             } else {
                 pr_info("BUFFER: device not yet created");
             }
@@ -208,11 +242,11 @@ static ssize_t chrdev_read(struct file *file, char __user *buf, size_t length, l
     unsigned int minor = (uintptr_t) file->private_data;
     pr_info("BUFFER: device %u, reader with offset %lld and length %ld\n", minor, *off, length);
 
-    down(buffer_lock + minor);
+    down_read(buffer_lock + minor);
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
     uncopy = copy_to_user(buf, buffer[minor] + offset, length);
-    up(buffer_lock + minor);
+    up_read(buffer_lock + minor);
     if (uncopy > 0) {
         pr_err("BUFFER: copy_to_user failed, doesn't copy %lu bytes", uncopy);
         return -EFAULT;
@@ -239,11 +273,11 @@ static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t le
         pr_err("BUFFER: can't alloc memory for tmp buffer\n");
         return -ENOMEM;
     }
-    down(buffer_lock + minor);
+    down_write(buffer_lock + minor);
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
     uncopy = copy_from_user(tmp_buffer, buf, length);
-    up(buffer_lock + minor);
+    up_write(buffer_lock + minor);
     if (uncopy > 0) {
         pr_err("BUFFER: copy_from_user failed, doesn't copy %lu bytes\n", uncopy);
         kfree(tmp_buffer);
@@ -258,8 +292,7 @@ static int chrdev_open(struct inode *inode, struct file *file) {
     int minor = iminor(inode);
 
     if (device_usage[minor] == 0) {
-        buffer[minor] = kzalloc(size, GFP_KERNEL);
-        buffer_size[minor] = size;
+        buffer[minor] = kzalloc(buffer_size[minor], GFP_KERNEL);
         if (buffer[minor] == NULL) {    
             pr_err("BUFFER: can't init %d device buffer\n", minor);
             return -1;
@@ -311,7 +344,7 @@ static int __init module_start(void)
     for (i = 0; i < MAX_COUNT; ++i) {
         device_usage[i] = 0;
         buffer[i] = 0;
-        sema_init(buffer_lock + i, 1);
+        init_rwsem(buffer_lock + i);
         cdev_init(chrdev_cdev + i, &chrdev_ops);
     }
     for (i = 0; i < count; ++i) {
