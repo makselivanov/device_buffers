@@ -5,10 +5,10 @@ typedef struct node_t {
     struct node_t *next;
     struct node_t *prev;
     void *data;
-} node;
+} node_t;
 
 typedef struct linked_list_t {
-    node *head;
+    node_t *head;
     size_t size;
 } linked_list;
 
