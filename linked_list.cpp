@@ -1,4 +1,5 @@
 #include "linked_list.h"
+#include <malloc.h>
 
 linked_list init_llist() {
     linked_list list;
