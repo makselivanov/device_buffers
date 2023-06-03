@@ -10,14 +10,15 @@ typedef struct inode_t {
     size_t capacity;
     char *data;
     struct inode_t* parent;
+    bool open;
 } inode_t;
 
-typedef struct catalog_node_t { //FIXME
+typedef struct catalog_node_t {
     bool is_dir;
     size_t inode_index;
     const char *fname;
 
-    linked_list_t entries;
+    linked_list entries; //contains catalog_node_t of children!! //FIXME??
     size_t entries_count;
 
     struct catalog_node_t *parent;
@@ -28,7 +29,7 @@ typedef struct catalog_t {
 } catalog_t;
 
 typedef struct storage_t {
-    linked_list inodes;
+    linked_list inodes; //contains inodes duh
     catalog_t catalog;
 } storage_t;
 
@@ -44,7 +45,7 @@ catalog_node_t* catalog_get(storage_t *storage, const char *path);
 bool catalog_exists(storage_t *storage, const char *path);
 
 catalog_t init_catalog();
-void free_catalog(catalog_t *catalog);
+void free_catalog(catalog_t catalog);
 void catalog_erase(catalog_node_t *node, bool delete_from_parent);
 
 #endif //HW_STORAGE_H
