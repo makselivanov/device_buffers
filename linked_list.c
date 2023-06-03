@@ -31,7 +31,7 @@ void *get(linked_list llist, size_t index) {
     return cur_node->data;
 }
 
-void *remove(linked_list llist, size_t index) {
+void *remove_index(linked_list llist, size_t index) {
     if (index >= llist.size)
         return NULL;
     node_t *cur_node = llist.head->next;
