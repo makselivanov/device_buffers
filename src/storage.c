@@ -4,12 +4,12 @@
 #include <errno.h>
 #include <libgen.h>
 
-storage_t init_storage() {
-    storage_t storage;
-    storage.inodes = init_llist();
-    storage.catalog = init_catalog();
-    icreate(&storage);
-    inode_t *root = get(storage.inodes, 0);
+storage_t *init_storage() {
+    storage_t *storage = malloc(sizeof(storage_t));
+    storage->inodes = init_llist();
+    storage->catalog = init_catalog();
+    icreate(storage);
+    inode_t *root = get(storage->inodes, 0);
     root->_stat.st_mode = S_IFDIR;
     return storage;
 }
@@ -166,22 +166,20 @@ bool catalog_exists(storage_t *storage, const char *path) {
 catalog_t init_catalog() {
     catalog_node_t *root = malloc(sizeof(catalog_node_t));
     catalog_node_t buffer = {
-            .entries_count = 0,
-            .entries = NULL,
-            .fname = "",
             .is_dir = true,
-            .inode_index = 0
+            .inode_index = 0,
+            .fname = "",
+            .entries = { .head = NULL, .size = 0},
+            .entries_count = 0,
     };
     *root = buffer;
     root->entries = init_llist();
     push_back(root->entries, root);
     push_back(root->entries, root);
     root->entries_count = 2;
-
     catalog_t catalog = {
             .root = root
     };
-
     return catalog;
 }
 

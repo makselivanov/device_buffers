@@ -10,7 +10,7 @@ typedef struct inode_t {
     size_t capacity;
     char *data;
     struct inode_t* parent;
-    bool open;
+    int open;
 } inode_t;
 
 typedef struct catalog_node_t {
@@ -29,11 +29,11 @@ typedef struct catalog_t {
 } catalog_t;
 
 typedef struct storage_t {
-    linked_list inodes; //contains inodes duh
+    linked_list inodes;
     catalog_t catalog;
 } storage_t;
 
-storage_t init_storage();
+storage_t *init_storage();
 void free_storage(storage_t *storage);
 
 int iwrite(inode_t *inode, const void *data, size_t size, size_t offset);
