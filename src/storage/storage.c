@@ -15,8 +15,8 @@ storage_t *init_storage() {
 }
 
 void free_storage(storage_t *storage) {
-    node_t *node = storage->inodes.head->next;
-    for (size_t i = 0; i < storage->inodes.size; ++i) {
+    node_t *node = storage->inodes->head->next;
+    for (size_t i = 0; i < storage->inodes->size; ++i) {
         inode_t *inode = node->data;
         free(inode->data);
         free(inode);
@@ -53,7 +53,8 @@ int iwrite(inode_t *inode, const void *data, size_t size, size_t offset) {
 
 int iread(inode_t *inode, void *data, size_t size, size_t offset) {
     if (offset >= inode->_stat.st_size) {
-        return -EOVERFLOW;
+        return 0;
+        //return -EOVERFLOW;
     }
     if (offset + size > inode->_stat.st_size) {
         size -= inode->_stat.st_size - offset;
@@ -69,7 +70,7 @@ unsigned long icreate(storage_t *storage) {
     inode->capacity = 0;
     inode->data = NULL;
     inode->_stat.st_size = 0;
-    inode->_stat.st_ino = storage->inodes.size;
+    inode->_stat.st_ino = storage->inodes->size;
     inode->open = 0;
     push_back(storage->inodes, inode);
     return inode->_stat.st_ino;
@@ -137,7 +138,7 @@ catalog_node_t* catalog_get(storage_t *storage, const char *path) {
             is_found = true;
             current = get(current->entries, 1);
         } else {
-            node_t *cur_node = current->entries.head->next->next;
+            node_t *cur_node = current->entries->head->next->next->next;
             for (size_t i = 2; i < current->entries_count; ++i) {
                 catalog_node_t *next = cur_node->data;
                 if (strcmp(fname, next->fname) == 0) {
@@ -155,7 +156,7 @@ catalog_node_t* catalog_get(storage_t *storage, const char *path) {
         fname = strtok(NULL, "/");
     }
     free(buffer);
-    return 0;
+    return current;
 }
 
 bool catalog_exists(storage_t *storage, const char *path) {
@@ -169,7 +170,7 @@ catalog_t init_catalog() {
             .is_dir = true,
             .inode_index = 0,
             .fname = "",
-            .entries = { .head = NULL, .size = 0},
+            .entries = NULL,
             .entries_count = 0,
     };
     *root = buffer;
@@ -195,19 +196,18 @@ void catalog_erase(catalog_node_t *node, bool delete_from_parent) {
 
         while ((current = remove_index(node->entries, 0)) != NULL) {
             catalog_erase(current, false);
-            free(current);
         }
 
         free_list(node->entries);
     }
 
     if (delete_from_parent) {
-        node_t *cur_node = node->parent->entries.head->next->next;
+        node_t *cur_node = node->parent->entries->head->next->next->next;
         for (size_t i = 2; i < node->parent->entries_count; ++i) {
             catalog_node_t *next = cur_node->data;
-            if (strcmp(next->fname, node->fname) == 0) {
+            if (strcmp(next->fname, node->fname) == 0) { //Maybe check ptr?
                 remove_index(node->parent->entries, i);
-                free(next);
+                //free(next); free at the end?
                 --node->parent->entries_count;
                 break;
             }

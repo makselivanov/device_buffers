@@ -13,10 +13,10 @@ typedef struct linked_list_t {
     size_t size;
 } linked_list;
 
-linked_list init_llist();
-void push_back(linked_list llist, void *data);
-void *get(linked_list llist, size_t index);
-void *remove_index(linked_list llist, size_t index);
-void free_list(linked_list llist);
+linked_list *init_llist();
+void push_back(linked_list *llist, void *data);
+void *get(linked_list *llist, size_t index);
+void *remove_index(linked_list *llist, size_t index);
+void free_list(linked_list *llist);
 
 #endif //HW_LINKED_LIST_H

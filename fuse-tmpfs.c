@@ -7,7 +7,7 @@
 #include <errno.h>
 #include <sys/stat.h>
 #include <stdio.h>
-#include "src/storage.h"
+#include "src/storage/storage.h"
 
 storage_t *storage = NULL;
 FILE *fd = NULL;
@@ -112,12 +112,13 @@ static int do_mkdir(const char *path, mode_t mode) {
         inode->_stat.st_uid = fuse_get_context()->uid;
         inode->open = 0;
         catalog_add(storage, path, true, id);
+        return 0;
     }
     return -EEXIST;
 }
 
 static int do_mknod(const char *path, mode_t mode, dev_t dev) {
-    fprintf(fd, "mkdir with path=\"%s\", mode=0%3o, dev=%ld\n", path, mode, dev);
+    fprintf(fd, "mknod with path=\"%s\", mode=0%3o, dev=%ld\n", path, mode, dev);
     fflush(fd);
 
     if (!catalog_exists(storage, path)) {
@@ -134,7 +135,7 @@ static int do_mknod(const char *path, mode_t mode, dev_t dev) {
 }
 
 static int do_opendir(const char *path, struct fuse_file_info *fi) {
-    fprintf(fd, "opendir with path=\"%s\"", path);
+    fprintf(fd, "opendir with path=\"%s\"\n", path);
     fflush(fd);
 
     catalog_node_t *node = catalog_get(storage, path);
@@ -154,7 +155,7 @@ static int do_opendir(const char *path, struct fuse_file_info *fi) {
 }
 
 static int do_releasedir(const char *path, struct fuse_file_info *fi) {
-    fprintf(fd, "releasedir with path=\"%s\"", path);
+    fprintf(fd, "releasedir with path=\"%s\"\n", path);
     fflush(fd);
 
     int node = fi->fh;
@@ -174,7 +175,7 @@ static int do_releasedir(const char *path, struct fuse_file_info *fi) {
 }
 
 static int do_unlink(const char *path) {
-    fprintf(fd, "unlink with path=\"%s\"", path);
+    fprintf(fd, "unlink with path=\"%s\"\n", path);
     fflush(fd);
 
     catalog_node_t *node = catalog_get(storage, path);
@@ -197,7 +198,7 @@ static int do_unlink(const char *path) {
 }
 
 static int do_rmdir(const char *path) {
-    fprintf(fd, "rmdir with path=\"%s\"", path);
+    fprintf(fd, "rmdir with path=\"%s\"\n", path);
     fflush(fd);
 
     catalog_node_t *node = catalog_get(storage, path);
@@ -223,7 +224,7 @@ static int do_rmdir(const char *path) {
 }
 
 static int do_open(const char *path, struct fuse_file_info *fi) {
-    fprintf(fd, "open with path=\"%s\"", path);
+    fprintf(fd, "open with path=\"%s\"\n", path);
     fflush(fd);
 
     catalog_node_t *node = catalog_get(storage, path);
@@ -242,7 +243,7 @@ static int do_open(const char *path, struct fuse_file_info *fi) {
 }
 
 static int do_release(const char *path, struct fuse_file_info *fi) {
-    fprintf(fd, "release with path=\"%s\"", path);
+    fprintf(fd, "release with path=\"%s\"\n", path);
     fflush(fd);
 
     if (fi == NULL) {
@@ -263,7 +264,7 @@ static int do_release(const char *path, struct fuse_file_info *fi) {
 }
 
 static int do_truncate(const char *path, off_t newsize) {
-    fprintf(fd, "release with path=\"%s\" and new size=%ld", path, newsize);
+    fprintf(fd, "release with path=\"%s\" and new size=%ld\n", path, newsize);
     fflush(fd);
 
     catalog_node_t *node = catalog_get(storage, path);
@@ -310,9 +311,7 @@ static struct fuse_operations operations = {
 int main(int argc, char *argv[]) {
     fd = fopen("log.txt", "w+");
     storage = init_storage();
-    printf("Begin\n");
     int result = fuse_main(argc, argv, &operations, NULL);
-    printf("End\n");
     free_storage(storage);
     return result;
 }

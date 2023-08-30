@@ -1,0 +1,11 @@
+.idea
+*.o.d
+Module.symvers
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+*.o
+*.cmd
+modules.order
+cmake-build-debug

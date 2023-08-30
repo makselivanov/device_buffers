@@ -1,4 +1,4 @@
-install: fuse-tmpfs.c src/linked_list.h src/linked_list.c src/storage.h src/storage.c
+install: fuse-tmpfs.c src/linked_list/linked_list.h src/linked_list/linked_list.c src/storage/storage.h src/storage/storage.c
 	gcc fuse-tmpfs.c linked_list.h linked_list.c storage.h storage.c -Wall -D_FILE_OFFSET_BITS=64 -lfuse -o tmpfs
 
 mount: tmpfs

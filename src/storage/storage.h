@@ -3,7 +3,7 @@
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include "linked_list.h"
+#include "../linked_list/linked_list.h"
 
 typedef struct inode_t {
     struct stat _stat;
@@ -18,7 +18,7 @@ typedef struct catalog_node_t {
     size_t inode_index;
     const char *fname;
 
-    linked_list entries; //contains catalog_node_t of children!! //FIXME??
+    linked_list *entries; //contains catalog_node_t of children!!
     size_t entries_count;
 
     struct catalog_node_t *parent;
@@ -29,7 +29,7 @@ typedef struct catalog_t {
 } catalog_t;
 
 typedef struct storage_t {
-    linked_list inodes;
+    linked_list *inodes;
     catalog_t catalog;
 } storage_t;
 
