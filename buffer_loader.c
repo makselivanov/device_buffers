@@ -133,7 +133,7 @@ int param_count_set(const char *val, const struct kernel_param *kp)
                 buffer_size[ncount] = size;
                 device_usage[ncount] = 0;
                 chrdev_created[ncount] = TRUE;
-                buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL);
+                //buffer[ncount] = kzalloc(buffer_size[ncount], GFP_KERNEL); //Will be allocated when open device
 
                 cur_dev = set_minor(dev, ncount);
                 sprintf(str, "buffer!buffer_device_%d", ncount);
@@ -152,16 +152,34 @@ int param_count_set(const char *val, const struct kernel_param *kp)
             }
         }
         else if (ncount > count) {
-            //Old was bigger than new, need to delete //TODO chdev del
-            while (ncount > count) {
-                --ncount;
-                down_write(buffer_lock + ncount); //lock
-                kfree(buffer[ncount]);
-                buffer[ncount] = 0;
-                chrdev_created[ncount] = FALSE;
-                cdev_del(chrdev_cdev + ncount);
-                up_write(buffer_lock + ncount);  //unlock
-                pr_info("BUFFER: free %d device\n", ncount);
+            //Old was bigger than new, need to delete //TODO chdev del?
+            //Lock everything for write and check if all deleting buffers is not usable right now
+            int index;
+            for (index = count; index < ncount; ++index) {
+                down_write(buffer_lock + index);
+            }
+            int isSomethingOpen = FALSE;
+            for (index = count; index < ncount; ++index) {
+                if (device_usage[index] != 0) {
+                    isSomethingOpen = TRUE;
+                }
+            }
+            if (isSomethingOpen) {
+                pr_info("BUFFER: Can't change size from %d to %d because some devices is open, rollback", ncount, count);
+                count = ncount; //Return old value
+            } else {
+                index = ncount;
+                while (index > count) {
+                    --index;
+                    kfree(buffer[index]);
+                    buffer[index] = 0;
+                    chrdev_created[index] = FALSE;
+                    cdev_del(chrdev_cdev + index);
+                    pr_info("BUFFER: free %d device\n", index);
+                }
+            }
+            for (index = count; index < ncount; ++index) {
+                up_write(buffer_lock + index);
             }
         } else {
             pr_info("BUFFER: count don't change\n");
