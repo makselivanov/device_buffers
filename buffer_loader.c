@@ -291,17 +291,19 @@ static ssize_t chrdev_write(struct file *file, const char __user *buf, size_t le
         pr_err("BUFFER: can't alloc memory for tmp buffer\n");
         return -ENOMEM;
     }
-    down_write(buffer_lock + minor);
+
     if (length + offset > buffer_size[minor])
         length = buffer_size[minor] - offset;
     uncopy = copy_from_user(tmp_buffer, buf, length);
-    up_write(buffer_lock + minor);
+
     if (uncopy > 0) {
         pr_err("BUFFER: copy_from_user failed, doesn't copy %lu bytes\n", uncopy);
         kfree(tmp_buffer);
         return -EFAULT;
     }
+    down_write(buffer_lock + minor);
     memcpy(buffer[minor] + offset, tmp_buffer, length);
+    up_write(buffer_lock + minor);
     *off += length;
     return length;
 }
